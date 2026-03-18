@@ -109,8 +109,8 @@ To use a different Whisper model, edit `DEFAULT_MODEL` in `transcription/transcr
 | Model | Size | Speed | Accuracy |
 |---|---|---|---|
 | `tiny` | ~75 MB | fastest | lowest |
-| `base` | ~150 MB | fast | good (default) |
-| `small` | ~490 MB | medium | better |
+| `base` | ~150 MB | fast | good |
+| `small` | ~490 MB | medium | better (default) |
 | `medium` | ~1.5 GB | slow | high |
 | `large-v2` | ~3 GB | slowest | best |
 

@@ -22,6 +22,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QFont, QPalette, QColor
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -48,14 +49,16 @@ class TranscriptionWorker(QObject):
     finished = Signal(str, str)    # (txt_path, srt_path)
     error = Signal(str)            # error message
 
-    def __init__(self, audio_path: str) -> None:
+    def __init__(self, audio_path: str, language: str | None) -> None:
         super().__init__()
         self._audio_path = audio_path
+        self._language = language
 
     def run(self) -> None:
         try:
             txt_path, srt_path = transcribe(
                 self._audio_path,
+                language=self._language,
                 progress_callback=lambda pct, msg: self.progress.emit(pct, msg),
             )
             self.finished.emit(txt_path, srt_path)
@@ -142,10 +145,18 @@ class DropZone(QWidget):
 class MainWindow(QMainWindow):
     """Application main window."""
 
+    # Maps display label -> ISO-639-1 code (None = auto-detect)
+    LANGUAGES: list[tuple[str, str | None]] = [
+        ("Auto-detect", None),
+        ("English", "en"),
+        ("Chinese (Simplified)", "zh"),
+        ("Japanese", "ja"),
+    ]
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Sound to Text")
-        self.setMinimumSize(520, 380)
+        self.setMinimumSize(520, 420)
         self._audio_path: str | None = None
         self._thread: QThread | None = None
         self._worker: TranscriptionWorker | None = None
@@ -187,6 +198,37 @@ class MainWindow(QMainWindow):
         path_row.addWidget(path_label)
         path_row.addWidget(self._path_display)
         root.addLayout(path_row)
+
+        # Language selector row
+        lang_row = QHBoxLayout()
+        lang_label = QLabel("Language:")
+        lang_label.setFixedWidth(70)
+        self._lang_combo = QComboBox()
+        self._lang_combo.setFixedHeight(30)
+        self._lang_combo.setStyleSheet(
+            """
+            QComboBox {
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 13px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background-color: #2b2b2b;
+                color: #e8e8e8;
+                selection-background-color: #3a7bd5;
+            }
+            """
+        )
+        for label, _ in self.LANGUAGES:
+            self._lang_combo.addItem(label)
+        lang_row.addWidget(lang_label)
+        lang_row.addWidget(self._lang_combo)
+        lang_row.addStretch()
+        root.addLayout(lang_row)
 
         # Transcribe button
         self._btn_transcribe = QPushButton("Transcribe")
@@ -282,8 +324,10 @@ class MainWindow(QMainWindow):
         self._progress.setValue(0)
         self._set_status("Starting…")
 
+        _, language = self.LANGUAGES[self._lang_combo.currentIndex()]
+
         self._thread = QThread(self)
-        self._worker = TranscriptionWorker(audio_path)
+        self._worker = TranscriptionWorker(audio_path, language)
         self._worker.moveToThread(self._thread)
 
         # Wire signals

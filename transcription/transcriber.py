@@ -24,7 +24,7 @@ ProgressCallback = Callable[[int, str], None]
 # Constants
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = "audio_output"
-DEFAULT_MODEL = "base"          # tiny | base | small | medium | large-v2
+DEFAULT_MODEL = "small"         # tiny | base | small | medium | large-v2
 DEFAULT_DEVICE = "cpu"          # cpu | cuda
 DEFAULT_COMPUTE = "int8"        # int8 | float16 | float32
 
