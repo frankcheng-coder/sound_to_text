@@ -29,17 +29,11 @@ Verify it is on your PATH:
 ffmpeg -version
 ```
 
-### 2 — Create and activate a virtual environment
+### 2 — Create a virtual environment and install Python dependencies
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 3 — Install Python dependencies
-
-```bash
-pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt
 ```
 
 ---
@@ -53,18 +47,19 @@ brew install ffmpeg
 # 2. Navigate to the project folder
 cd /Users/pengcheng/personal_projects/sound_to_text
 
-# 3. Create and activate a virtual environment
+# 3. Create a virtual environment and install dependencies
 python3 -m venv .venv
-source .venv/bin/activate
+.venv/bin/pip install -r requirements.txt
 
-# 4. Install dependencies
-pip install -r requirements.txt
-
-# 5. Launch the app
-python main.py
+# 4. Launch the app
+./run.sh
 ```
 
-On first launch, faster-whisper will download the Whisper `base` model (~150 MB) and cache it locally. Subsequent runs only need steps 2, `source .venv/bin/activate`, and `python main.py`.
+On first launch, faster-whisper will download the Whisper `base` model (~150 MB) and cache it locally. For all subsequent runs, just use:
+
+```bash
+./run.sh
+```
 
 ---
 
@@ -87,6 +82,7 @@ A popup confirms the output paths on success, or shows an error message on failu
 ```
 sound_to_text/
 ├── main.py                    # App entry point
+├── run.sh                     # One-command launcher
 ├── requirements.txt
 ├── README.md
 ├── gui/
