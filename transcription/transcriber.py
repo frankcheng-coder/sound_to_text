@@ -7,7 +7,9 @@ All heavy work runs in a background thread — never call this from the GUI thre
 
 from __future__ import annotations
 
+import multiprocessing
 import os
+import threading
 from typing import Callable
 
 from faster_whisper import WhisperModel
@@ -33,6 +35,10 @@ DEFAULT_COMPUTE = "int8"        # int8 | float16 | float32
 # Public API
 # ---------------------------------------------------------------------------
 
+class TranscriptionCancelledError(Exception):
+    """Raised when the user cancels transcription."""
+
+
 def transcribe(
     audio_path: str,
     *,
@@ -41,6 +47,7 @@ def transcribe(
     compute_type: str = DEFAULT_COMPUTE,
     language: str | None = None,
     progress_callback: ProgressCallback | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[str, str]:
     """
     Transcribe *audio_path* and save a .txt and a .srt file.
@@ -65,6 +72,10 @@ def transcribe(
         if progress_callback:
             progress_callback(percent, message)
 
+    def _check_cancelled() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TranscriptionCancelledError("Transcription cancelled by user.")
+
     # ------------------------------------------------------------------
     # 1. Validate input
     # ------------------------------------------------------------------
@@ -77,6 +88,7 @@ def transcribe(
     srt_path = os.path.join(OUTPUT_DIR, f"{base_name}.srt")
 
     _emit(5, "Loading Whisper model…")
+    _check_cancelled()
 
     # ------------------------------------------------------------------
     # 2. Load model
@@ -86,6 +98,7 @@ def transcribe(
     except Exception as exc:
         raise RuntimeError(f"Failed to load Whisper model '{model_size}': {exc}") from exc
 
+    _check_cancelled()
     _emit(20, "Model loaded. Starting transcription…")
 
     # ------------------------------------------------------------------
@@ -106,8 +119,14 @@ def transcribe(
 
     # Materialise the generator so we can reuse segments for both outputs.
     # faster-whisper returns a lazy generator — exhaust it once.
+    # We iterate one segment at a time so we can check for cancellation.
+    segments = []
     try:
-        segments = list(segments_gen)
+        for seg in segments_gen:
+            _check_cancelled()
+            segments.append(seg)
+    except TranscriptionCancelledError:
+        raise
     except Exception as exc:
         raise RuntimeError(f"Error while reading transcription segments: {exc}") from exc
 
@@ -139,3 +158,31 @@ def transcribe(
     _emit(100, f"Done! Files saved to '{OUTPUT_DIR}/'")
 
     return txt_path, srt_path
+
+
+# ---------------------------------------------------------------------------
+# Subprocess entry point  (used by the GUI for killable transcription)
+# ---------------------------------------------------------------------------
+
+def _transcribe_in_subprocess(
+    queue: multiprocessing.Queue,
+    audio_path: str,
+    language: str | None,
+) -> None:
+    """Run transcription and post progress/results to *queue*.
+
+    Messages sent to the queue:
+        ("progress", percent, message)
+        ("finished", txt_path, srt_path)
+        ("error", error_string)
+    """
+    try:
+        txt_path, srt_path = transcribe(
+            audio_path,
+            language=language,
+            progress_callback=lambda pct, msg: queue.put(("progress", pct, msg)),
+        )
+        queue.put(("finished", txt_path, srt_path))
+    except Exception as exc:
+        import traceback
+        queue.put(("error", f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc()}"))

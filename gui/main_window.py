@@ -11,8 +11,9 @@ Responsibilities:
 
 from __future__ import annotations
 
+import multiprocessing
 import os
-import traceback
+import queue
 
 from PySide6.QtCore import (
     QThread,
@@ -35,35 +36,71 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from transcription.transcriber import transcribe
+from transcription.transcriber import _transcribe_in_subprocess
 
 
 # ---------------------------------------------------------------------------
-# Background worker
+# Background worker  (runs a subprocess so it can be killed instantly)
 # ---------------------------------------------------------------------------
 
 class TranscriptionWorker(QObject):
-    """Runs transcription in a background thread and emits progress signals."""
+    """Monitors a transcription subprocess and relays its messages as signals."""
 
     progress = Signal(int, str)    # (percent, message)
     finished = Signal(str, str)    # (txt_path, srt_path)
     error = Signal(str)            # error message
+    cancelled = Signal()
 
     def __init__(self, audio_path: str, language: str | None) -> None:
         super().__init__()
         self._audio_path = audio_path
         self._language = language
+        self._process: multiprocessing.Process | None = None
+        self._stopped = False
 
     def run(self) -> None:
-        try:
-            txt_path, srt_path = transcribe(
-                self._audio_path,
-                language=self._language,
-                progress_callback=lambda pct, msg: self.progress.emit(pct, msg),
-            )
-            self.finished.emit(txt_path, srt_path)
-        except Exception as exc:
-            self.error.emit(f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc()}")
+        msg_queue: multiprocessing.Queue = multiprocessing.Queue()
+        self._process = multiprocessing.Process(
+            target=_transcribe_in_subprocess,
+            args=(msg_queue, self._audio_path, self._language),
+            daemon=True,
+        )
+        self._process.start()
+
+        # Poll the queue until the subprocess finishes or is killed.
+        while True:
+            if self._stopped:
+                self.cancelled.emit()
+                return
+            try:
+                msg = msg_queue.get(timeout=0.15)
+            except queue.Empty:
+                if self._process is not None and not self._process.is_alive():
+                    if self._stopped:
+                        self.cancelled.emit()
+                    else:
+                        self.error.emit("Transcription process ended unexpectedly.")
+                    return
+                continue
+
+            kind = msg[0]
+            if kind == "progress":
+                self.progress.emit(msg[1], msg[2])
+            elif kind == "finished":
+                self.finished.emit(msg[1], msg[2])
+                return
+            elif kind == "error":
+                self.error.emit(msg[1])
+                return
+
+    def cancel(self) -> None:
+        """Kill the subprocess immediately."""
+        self._stopped = True
+        if self._process is not None and self._process.is_alive():
+            self._process.terminate()
+            self._process.join(timeout=2)
+            if self._process.is_alive():
+                self._process.kill()
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +288,26 @@ class MainWindow(QMainWindow):
         self._btn_transcribe.clicked.connect(self._on_transcribe_clicked)
         root.addWidget(self._btn_transcribe)
 
+        # Cancel button (hidden until transcription starts)
+        self._btn_cancel = QPushButton("Cancel Transcription")
+        self._btn_cancel.setFixedHeight(40)
+        self._btn_cancel.setVisible(False)
+        self._btn_cancel.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #c0392b;
+                color: white;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover  { background-color: #e74c3c; }
+            QPushButton:pressed { background-color: #a93226; }
+            """
+        )
+        self._btn_cancel.clicked.connect(self._on_cancel_clicked)
+        root.addWidget(self._btn_cancel)
+
         # Progress bar
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
@@ -320,6 +377,7 @@ class MainWindow(QMainWindow):
     def _start_transcription(self, audio_path: str) -> None:
         """Spin up a QThread + worker and begin transcription."""
         self._btn_transcribe.setEnabled(False)
+        self._btn_cancel.setVisible(True)
         self._drop_zone.setEnabled(False)
         self._progress.setValue(0)
         self._set_status("Starting…")
@@ -335,6 +393,7 @@ class MainWindow(QMainWindow):
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
+        self._worker.cancelled.connect(self._thread.quit)
 
         # Cleanup after done
         self._worker.finished.connect(self._thread.quit)
@@ -369,12 +428,25 @@ class MainWindow(QMainWindow):
             f"An error occurred during transcription:\n\n{message}",
         )
 
+    def _on_cancel_clicked(self) -> None:
+        """Kill the subprocess immediately and update UI."""
+        if self._worker is not None:
+            self._worker.cancel()
+        self._btn_cancel.setEnabled(False)
+        self._set_status("Cancelling…")
+
     def _on_thread_finished(self) -> None:
+        cancelled = self._worker is not None and self._worker._stopped
         self._btn_transcribe.setEnabled(True)
+        self._btn_cancel.setVisible(False)
+        self._btn_cancel.setEnabled(True)
         self._drop_zone.setEnabled(True)
         # Clean up references
         self._worker = None
         self._thread = None
+        if cancelled:
+            self._progress.setValue(0)
+            self._set_status("Transcription cancelled.")
 
     # ------------------------------------------------------------------
     # Helpers
