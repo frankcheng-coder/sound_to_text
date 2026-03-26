@@ -12,3 +12,7 @@ __pycache__/
 
 # Generated files
 audio_output/
+
+# Build output
+dist/
+build/
