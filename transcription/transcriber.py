@@ -10,6 +10,7 @@ from __future__ import annotations
 import multiprocessing
 import os
 import threading
+from datetime import datetime
 from typing import Callable
 
 from faster_whisper import WhisperModel
@@ -83,9 +84,10 @@ def transcribe(
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     base_name = os.path.splitext(os.path.basename(audio_path))[0]
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    txt_path = os.path.join(OUTPUT_DIR, f"{base_name}.txt")
-    srt_path = os.path.join(OUTPUT_DIR, f"{base_name}.srt")
+    txt_path = os.path.join(OUTPUT_DIR, f"{base_name}_{timestamp}.txt")
+    srt_path = os.path.join(OUTPUT_DIR, f"{base_name}_{timestamp}.srt")
 
     _emit(5, "Loading Whisper model…")
     _check_cancelled()
